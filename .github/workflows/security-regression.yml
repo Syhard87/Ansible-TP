@@ -47,15 +47,20 @@ jobs:
       - name: Créer Inventaire Ansible Dynamique
         run: |
           echo "[webservers]" > inventory.ini
-          echo "$VM_IP ansible_user=adminuser ansible_ssh_common_args='-o StrictHostKeyChecking=no'" >> inventory.ini
-
-      - name: Setup SSH Agent
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          echo "$VM_IP ansible_user=adminuser ansible_ssh_private_key_file=id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'" >> inventory.ini
 
       - name: Installer et Lancer Ansible
+        env:
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
+          # Création du fichier de clé
+          echo "$SSH_KEY" > id_rsa
+          chmod 600 id_rsa
+
+          # DIAGNOSTIC : Vérification du format de la clé (Safe, affiche juste le type)
+          echo "Vérification de la clé privée..."
+          ssh-keygen -l -f id_rsa || echo "ERREUR: La clé privée semble invalide ou malformée (ex: format PuTTY au lieu de OpenSSH)"
+
           sudo apt-get update && sudo apt-get install -y ansible
           ansible-playbook -i inventory.ini playbook.yml
 
