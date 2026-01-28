@@ -1,0 +1,50 @@
+site_name: Azure DevSecOps
+site_description: Documentation du pipeline de déploiement sécurisé
+site_author: Antoine Morellet
+repo_url: https://github.com/Syhard87/tp-devsecops
+repo_name: GitHub Repo
+
+theme:
+  name: material
+  language: fr
+  palette:
+    - scheme: default
+      primary: teal
+      accent: purple
+      toggle:
+        icon: material/weather-sunny
+        name: Passer au mode sombre
+    - scheme: slate
+      primary: teal
+      accent: lime
+      toggle:
+        icon: material/weather-night
+        name: Passer au mode clair
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.highlight
+  - attr_list
+  - tables
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+plugins:
+  - search
+
+nav:
+  - Accueil: index.md
+  - FinOps: finops.md
+  - Analyse Qualité: analyse.md
+  - Infrastructure: infra.md

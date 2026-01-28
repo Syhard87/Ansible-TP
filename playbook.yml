@@ -1,0 +1,57 @@
+---
+- name: Configuration du Serveur Web Apache
+  hosts: webservers
+  become: yes
+  vars:
+    apache_package: apache2
+    
+  tasks:
+    # Tâche 1 : Installer Apache
+    - name: Installer le paquet Apache
+      apt:
+        name: "{{ apache_package }}"
+        state: present
+        update_cache: yes
+
+    # Tâche 2 : S'assurer qu'Apache est démarré
+    - name: Démarrer et activer le service Apache
+      service:
+        name: "{{ apache_package }}"
+        state: started
+        enabled: yes
+
+    # Tâche 3 : Copier le fichier index.html
+    - name: Copier le fichier index.html
+      copy:
+        src: index.html
+        dest: /var/www/html/index.html
+        mode: '0644'
+
+    # Tâche 4 : Activer le module headers 
+    - name: Activer le module headers apache
+      apache2_module:
+        state: present
+        name: headers
+      notify: Redémarrer Apache
+
+    # Tâche 5 : Ajouter le header de sécurité dans la config
+    - name: Ajouter le header X-Content-Type-Options
+      lineinfile:
+        path: /etc/apache2/conf-available/security.conf
+        regexp: '^Header set X-Content-Type-Options'
+        line: 'Header set X-Content-Type-Options "nosniff"'
+        create: yes
+      notify: Redémarrer Apache
+
+    # Tâche 6 : Activer la configuration de sécurité 
+    - name: Activer la conf security
+      command: a2enconf security
+      args:
+        creates: /etc/apache2/conf-enabled/security.conf
+      notify: Redémarrer Apache
+
+  handlers:
+    - name: Redémarrer Apache
+      service:
+        name: apache2
+        state: restarted

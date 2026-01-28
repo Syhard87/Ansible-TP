@@ -1,0 +1,170 @@
+name: Persistent Environment, Docs, Sonar & FinOps
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  # --- JOB 1 : INFRASTRUCTURE ET CONFIGURATION ---
+  provisioning:
+    name: Environment Persistant
+    runs-on: ubuntu-latest
+    env:
+      ARM_CLIENT_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).clientId }}
+      ARM_CLIENT_SECRET: ${{ fromJson(secrets.AZURE_CREDENTIALS).clientSecret }}
+      ARM_SUBSCRIPTION_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).subscriptionId }}
+      ARM_TENANT_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).tenantId }}
+      TF_VAR_client_id: ${{ fromJson(secrets.AZURE_CREDENTIALS).clientId }}
+      TF_VAR_client_secret: ${{ fromJson(secrets.AZURE_CREDENTIALS).clientSecret }}
+      TF_VAR_subscription_id: ${{ fromJson(secrets.AZURE_CREDENTIALS).subscriptionId }}
+      TF_VAR_tenant_id: ${{ fromJson(secrets.AZURE_CREDENTIALS).tenantId }}
+      TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
+
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Run tfsec validation
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          soft_fail: true # Ne casse pas le build pour l'instant (mode audit)
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve
+
+      - name: Capture de l'IP Output
+        id: get_ip
+        run: |
+          IP=$(terraform output -raw vm_public_ip)
+          echo "VM_IP=$IP" >> $GITHUB_ENV
+
+      - name: Créer Inventaire Ansible Dynamique
+        run: |
+          echo "[webservers]" > inventory.ini
+          echo "$VM_IP ansible_user=adminuser ansible_ssh_private_key_file=id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'" >> inventory.ini
+
+      - name: Installer et Lancer Ansible
+        env:
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          echo "$SSH_KEY" > id_rsa
+          chmod 600 id_rsa
+          sudo apt-get update && sudo apt-get install -y ansible
+          ansible-playbook -i inventory.ini playbook.yml
+
+      - name: Exécuter les tests fonctionnels
+        run: |
+          chmod +x tests/*.sh
+          ./tests/check_functional.sh $VM_IP
+
+  # --- JOB 2 : DÉPLOIEMENT DE LA DOCUMENTATION MKDOCS ---
+  deploy-docs:
+    name: Build & Deploy Docs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Configurer Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt
+
+      - name: Déployer la doc sur GitHub Pages
+        run: mkdocs gh-deploy --force
+
+  # --- JOB 3 : ANALYSE SONARCLOUD ---
+  sonarcloud:
+    name: SonarCloud Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Important pour l'analyse de l'historique
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  # --- JOB 4 : FINOPS (Estimation des Coûts) ---
+  finops:
+    name: Estimation Infracost
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Setup Infracost
+        uses: infracost/actions/setup@v3
+        with:
+          api-key: ${{ secrets.INFRACOST_API_KEY }}
+
+      - name: Générer le rapport FinOps pour la Doc
+        run: |
+          # 1. IMPORTANT : On génère un JSON (c'est la base de données brute)
+          infracost breakdown --path . --format json --out-file infracost.json
+
+          # 2. On extrait le PRIX TOTAL pour l'afficher en gros (avec jq)
+          # On gère le cas où le coût est nul ou vide pour éviter les erreurs
+          TOTAL_MONTHLY=$(jq -r '.totalMonthlyCost // "0.00"' infracost.json)
+
+          # 3. Écriture de l'en-tête stylé dans finops.md
+          echo "#  Estimation des Coûts Cloud" > docs/finops.md
+          echo "" >> docs/finops.md
+
+          # Bloc Admonition (MkDocs) avec HTML intégré pour le style
+          echo '!!! quote "Facture Mensuelle Estimée"' >> docs/finops.md
+          echo "    <h1 style='color: #2E7D32; font-size: 2em; margin: 0;'>$TOTAL_MONTHLY $ / mois</h1>" >> docs/finops.md
+          echo "    <p>Estimation basée sur le code Terraform actuel (coûts fixes + usage estimé).</p>" >> docs/finops.md
+          echo "" >> docs/finops.md
+
+          echo "##  Détail des ressources" >> docs/finops.md
+          echo "" >> docs/finops.md
+
+          # 4. On génère le tableau à partir du JSON créé en étape 1
+          infracost output --path infracost.json --format github-comment > temp_table.md
+
+          # 5. NETTOYAGE : On retire les balises HTML <details> pour que le tableau soit toujours ouvert
+          # On retire aussi le titre par défaut d'Infracost pour garder le vôtre
+          sed -i '/<details>/d' temp_table.md
+          sed -i '/<\/details>/d' temp_table.md
+          sed -i '/<summary>/d' temp_table.md
+          sed -i '/<h4> Infracost report/d' temp_table.md 
+          sed -i '/Monthly estimate generated/d' temp_table.md
+
+          # 6. On injecte le tableau propre
+          cat temp_table.md >> docs/finops.md
+
+          # Nettoyage des fichiers temporaires
+          rm infracost.json temp_table.md
+
+      - name: Sauvegarder le rapport dans Git
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git add docs/finops.md
+
+          # Commit seulement si le fichier a changé
+          if git diff --staged --quiet; then
+            echo "Pas de changement de coût, on ne push pas."
+          else
+            git commit -m " DOC: Mise à jour auto des coûts ($TOTAL_MONTHLY $)"
+            git pull --rebase origin main
+            git push origin main
+          fi
