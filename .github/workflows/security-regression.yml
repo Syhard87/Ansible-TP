@@ -53,7 +53,7 @@ jobs:
         env:
           SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
-          echo "$SSH_KEY" > id_rsa
+          printf "%s\n" "$SSH_KEY" > id_rsa
           chmod 600 id_rsa
           sudo apt-get update && sudo apt-get install -y ansible
           ansible-playbook -i inventory.ini playbook.yml

@@ -4,3 +4,5 @@
 *.tfvars
 .vault-token
 .ssh/
+id_rsa
+inventory.ini
